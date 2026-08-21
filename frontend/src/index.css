@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Leaflet's own stylesheet, imported in main.tsx, handles the map tiles. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
