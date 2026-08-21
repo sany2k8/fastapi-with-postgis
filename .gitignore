@@ -1,0 +1,37 @@
+# ============================================================
+# Root .gitignore — project-wide rules
+# Stack-specific rules live in backend/ and frontend/
+# ============================================================
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+
+# Environment variables (root-level)
+.env
+.env.local
+.env.*.local
+
+# Docker overrides
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# IDE / editors
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets / credentials
+*.pem
+*.key
+*.cert
+secrets/
+
+# Logs (root-level)
+*.log
+logs/
