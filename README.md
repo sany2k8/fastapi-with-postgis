@@ -124,6 +124,37 @@ sequenceDiagram
 *longer* (it prefers main roads) while the shortest can be *slower* (back
 streets) — the same trade-off Google surfaces.
 
+## Adding your own data
+
+`make seed` / `make ingest-roads` load the predefined fixtures. To build your
+own from a blank database, use the management CLI
+([`scripts/manage.py`](backend/scripts/manage.py)) — no code changes needed:
+
+```bash
+make manage ARGS="stats"                       # counts of places/neighbourhoods/roads
+
+# a single place  (--at lat,lng)
+make manage ARGS='add-place "Blue Bottle" cafe --at 37.776,-122.423 --rating 4.6'
+
+# a neighbourhood rectangle  (--bbox min_lon,min_lat,max_lon,max_lat)
+make manage ARGS='add-neighborhood "Downtown" --bbox=-122.42,37.77,-122.40,37.79'
+
+# 200 synthetic places in a bbox, plus a neighbourhood covering it
+make manage ARGS='generate-places --bbox=-122.46,37.74,-122.39,37.81 --count 200 --neighborhood "My Area"'
+
+# a routable road network for ANY area (fetched live from OpenStreetMap)
+make manage ARGS='add-city-roads sylhet --bbox 91.855,24.885,91.895,24.915'
+make manage ARGS='clear-roads sylhet'          # remove it again
+```
+
+A city added with `add-city-roads` is immediately routable — it shows up in
+`GET /api/route/cities` and the frontend's city dropdown with no restart.
+
+> **Coordinates are comma-separated strings**, so a leading minus isn't mistaken
+> for a CLI flag. If a value *starts* with `-`, use the `--opt=value` form (with
+> the equals sign), e.g. `--bbox=-122.42,...`. All bboxes use the same order as
+> the `/api/places` API: `min_lon,min_lat,max_lon,max_lat`.
+
 ## Learning the spatial SQL
 
 See [`docs/postgis-reference.md`](docs/postgis-reference.md) — a hands-on
@@ -144,8 +175,11 @@ backend/
     services/       # validation + GeoJSON assembly
     repositories/   # the PostGIS SQL
   migrations/       # Alembic
-  scripts/seed.py   # synthetic data
-  tests/            # unit (validation) + integration (API vs live DB)
+  scripts/
+    seed.py         # synthetic places + neighbourhoods (SF)
+    ingest_roads.py # OSM road graphs for the predefined cities
+    manage.py       # Typer CLI: add your own places/neighbourhoods/city roads
+  tests/            # unit (validation, A*) + integration (API vs live DB)
 frontend/
   src/
     api.ts          # typed client
