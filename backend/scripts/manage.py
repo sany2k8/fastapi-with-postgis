@@ -25,8 +25,13 @@ Examples
     uv run python -m scripts.manage generate-places --bbox=-122.46,37.74,-122.39,37.81 \
         --count 200 --neighborhood "My Area"
 
-    # a routable road network for a new city (OpenStreetMap via Overpass)
+    # a routable road network for a new city, by explicit bbox …
     uv run python -m scripts.manage add-city-roads sylhet --bbox 91.85,24.87,91.92,24.93
+
+    # … or just pick a country + city and let OSM resolve the bbox for you
+    uv run python -m scripts.manage list-countries --search bang
+    uv run python -m scripts.manage search-city Bangladesh Sylhet
+    uv run python -m scripts.manage add-city Bangladesh Sylhet --max-km 10
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from sqlalchemy import text
 from app.core.db import SessionLocal
 from app.models.neighborhood import Neighborhood
 from app.models.place import Place
+from scripts import geocode
 from scripts.ingest_roads import ingest_city
 from scripts.seed import (
     CATEGORIES,
@@ -156,6 +162,68 @@ def add_city_roads(
     console.print(f"Fetching roads for '{city}' from Overpass… (this can take a moment)")
     nodes, edges = ingest_city(city, box)
     console.print(f"[green]✓[/] loaded '{city}': {nodes} nodes, {edges} edges")
+
+
+@app.command()
+def list_countries(
+    search: str | None = typer.Option(None, "--search", help="Filter by name substring"),
+) -> None:
+    """List countries (name + ISO code) to use with add-city / search-city."""
+    rows = geocode.list_countries(search)
+    if not rows:
+        console.print("[yellow]no countries matched[/]")
+        return
+    table = Table(title=f"countries ({len(rows)})")
+    table.add_column("name")
+    table.add_column("code")
+    for name, code in rows:
+        table.add_row(name, code)
+    console.print(table)
+
+
+@app.command()
+def search_city(
+    country: str = typer.Argument(..., help="Country name or ISO code"),
+    city: str = typer.Argument(..., help="City name to look up"),
+    limit: int = typer.Option(5, min=1, max=20),
+) -> None:
+    """Look up a city via OpenStreetMap and show candidate matches + bbox size."""
+    matches = geocode.search_city(country, city, limit)
+    if not matches:
+        console.print(f"[yellow]no match for '{city}' in '{country}'[/]")
+        return
+    table = Table(title=f"'{city}' in {country}")
+    table.add_column("#")
+    table.add_column("match")
+    table.add_column("type")
+    table.add_column("size (km)")
+    for i, m in enumerate(matches, 1):
+        short = m.name.split(",")[0] + (f", …{m.name.split(',')[-1]}" if "," in m.name else "")
+        table.add_row(str(i), short, m.kind, f"{m.width_km:.0f}×{m.height_km:.0f}")
+    console.print(table)
+    console.print("[dim]Add one with:  add-city <country> <city> --max-km 12[/]")
+
+
+@app.command()
+def add_city(
+    country: str = typer.Argument(..., help="Country name or ISO code"),
+    city: str = typer.Argument(..., help="City name (geocoded via OpenStreetMap)"),
+    label: str | None = typer.Option(None, "--label", help="DB label (default: slug of city)"),
+    max_km: float = typer.Option(12.0, "--max-km", help="Cap the fetched area to this size"),
+) -> None:
+    """Pick a country + city, auto-resolve its bounding box, and load its roads."""
+    matches = geocode.search_city(country, city, limit=1)
+    if not matches:
+        raise typer.BadParameter(f"no match for '{city}' in '{country}' — try `search-city`")
+    m = matches[0]
+    bbox, capped = geocode.cap_bbox(m.lat, m.lon, m.bbox, max_km)
+    slug = (label or city).strip().lower().replace(" ", "-")
+    console.print(f"Resolved [bold]{m.name.split(',')[0]}[/] → center {m.lat:.4f}, {m.lon:.4f}")
+    if capped:
+        console.print(f"[dim]bbox capped to ~{max_km:.0f} km (full area was larger)[/]")
+    console.print(f"Fetching roads for '{slug}' from Overpass… (this can take a moment)")
+    nodes, edges = ingest_city(slug, bbox)
+    console.print(f"[green]✓[/] loaded '{slug}': {nodes} nodes, {edges} edges — now routable")
 
 
 @app.command()

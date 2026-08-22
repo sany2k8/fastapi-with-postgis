@@ -147,6 +147,19 @@ make manage ARGS='add-city-roads sylhet --bbox 91.855,24.885,91.895,24.915'
 make manage ARGS='clear-roads sylhet'          # remove it again
 ```
 
+**Don't know the bbox?** Pick a country and city by name and let OSM geocode it
+(via Nominatim), capping the fetched area to a routable size:
+
+```bash
+make manage ARGS='list-countries --search bang'     # find the country name/code
+make manage ARGS='search-city Bangladesh Sylhet'    # see candidates + their size
+make manage ARGS='add-city Bangladesh Sylhet --max-km 10'   # resolve bbox + ingest
+```
+
+`add-city` geocodes the city, clamps its (often tens-of-km-wide) bounding box to
+`--max-km`, and loads the roads — one command from country+city name to a
+routable network.
+
 A city added with `add-city-roads` is immediately routable — it shows up in
 `GET /api/route/cities` and the frontend's city dropdown with no restart.
 
@@ -178,6 +191,7 @@ backend/
   scripts/
     seed.py         # synthetic places + neighbourhoods (SF)
     ingest_roads.py # OSM road graphs for the predefined cities
+    geocode.py      # Nominatim: country/city name -> bounding box
     manage.py       # Typer CLI: add your own places/neighbourhoods/city roads
   tests/            # unit (validation, A*) + integration (API vs live DB)
 frontend/
