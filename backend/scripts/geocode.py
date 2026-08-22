@@ -18,9 +18,9 @@ _HEADERS = {"User-Agent": "places-finder-learning/0.1 (routing demo)"}
 
 
 @dataclass
-class CityMatch:
+class GeoMatch:
     name: str
-    kind: str  # osm 'type', e.g. city / town / administrative
+    kind: str  # osm 'type', e.g. city / town / suburb / attraction
     lat: float
     lon: float
     # bbox in the project convention: (min_lon, min_lat, max_lon, max_lat)
@@ -57,27 +57,20 @@ def list_countries(query: str | None = None) -> list[tuple[str, str]]:
     return sorted(out)
 
 
-def search_city(country: str, city: str, limit: int = 5) -> list[CityMatch]:
-    """Look up a city within a country; return candidate matches with bboxes."""
-    cc = country_code(country)
-    params = {
-        "city": city,
-        "format": "jsonv2",
-        "limit": str(limit),
-        "featureType": "city",
-    }
-    if cc:
-        params["countrycodes"] = cc
-    else:
-        params["country"] = country
-    resp = httpx.get(NOMINATIM_URL, params=params, headers=_HEADERS, timeout=30)
+def _nominatim(params: dict[str, str]) -> list[GeoMatch]:
+    resp = httpx.get(
+        NOMINATIM_URL,
+        params={"format": "jsonv2", **params},
+        headers=_HEADERS,
+        timeout=30,
+    )
     resp.raise_for_status()
-    matches: list[CityMatch] = []
+    matches: list[GeoMatch] = []
     for r in resp.json():
         # Nominatim boundingbox is [south, north, west, east] as strings.
         s, n, w, e = (float(x) for x in r["boundingbox"])
         matches.append(
-            CityMatch(
+            GeoMatch(
                 name=r["display_name"],
                 kind=r.get("type", "?"),
                 lat=float(r["lat"]),
@@ -86,6 +79,22 @@ def search_city(country: str, city: str, limit: int = 5) -> list[CityMatch]:
             )
         )
     return matches
+
+
+def search_city(country: str, city: str, limit: int = 5) -> list[GeoMatch]:
+    """Look up a city within a country; return candidate matches with bboxes."""
+    cc = country_code(country)
+    params = {"city": city, "limit": str(limit), "featureType": "city"}
+    params["countrycodes" if cc else "country"] = cc or country
+    return _nominatim(params)
+
+
+def search_place(country: str, query: str, limit: int = 5) -> list[GeoMatch]:
+    """Look up any place/area/POI within a country (no city-only filter)."""
+    cc = country_code(country)
+    params = {"q": query, "limit": str(limit)}
+    params["countrycodes" if cc else "country"] = cc or country
+    return _nominatim(params)
 
 
 def _bbox_span_km(bbox: tuple[float, float, float, float]) -> tuple[float, float]:

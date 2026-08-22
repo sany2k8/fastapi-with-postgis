@@ -17,6 +17,22 @@ networks for three Bangladesh cities — Khulna, Dhaka, Chattogram — showing t
 the graph and snaps clicks to the nearest road; a hand-written **A\*** finds the
 route. See [Routing](#routing-directions) below.
 
+## Screenshots
+
+<details>
+<summary><b>Frontend — the interactive map (:5199)</b></summary>
+
+![Places Finder frontend: the SF map with 510 category-coloured markers and the filter panel](docs/images/frontend.png)
+
+</details>
+
+<details>
+<summary><b>Backend — FastAPI / Swagger docs (:8850/docs)</b></summary>
+
+![Auto-generated OpenAPI docs listing the places, neighborhoods, and routing endpoints](docs/images/api-docs.png)
+
+</details>
+
 ## Stack
 
 | Layer | Tech |
@@ -159,6 +175,24 @@ make manage ARGS='add-city Bangladesh Sylhet --max-km 10'   # resolve bbox + ing
 `add-city` geocodes the city, clamps its (often tens-of-km-wide) bounding box to
 `--max-km`, and loads the roads — one command from country+city name to a
 routable network.
+
+The same geocoding works for **places and neighbourhoods** — pass `--country`
+(with the name as the query) instead of coordinates:
+
+```bash
+# place: geocode the name to a point
+make manage ARGS='add-place "Eiffel Tower Cafe" cafe --country France --query "Eiffel Tower"'
+
+# neighbourhood: geocode the name to a (capped) rectangle
+make manage ARGS='add-neighborhood Gulshan --country Bangladesh'
+
+# generate synthetic places inside a geocoded area
+make manage ARGS='generate-places --country France --place Lyon --count 50 --max-km 6'
+```
+
+Every data command accepts **either** the manual form (`--at` / `--bbox`) **or**
+the geocoded form (`--country …`), so you can be precise when you have
+coordinates and convenient when you don't.
 
 A city added with `add-city-roads` is immediately routable — it shows up in
 `GET /api/route/cities` and the frontend's city dropdown with no restart.

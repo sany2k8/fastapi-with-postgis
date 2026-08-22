@@ -13,17 +13,29 @@ Coordinates are passed as comma-separated strings (never as separate numbers),
 so a leading minus sign isn't mistaken for a CLI flag. If a value *starts* with
 a minus, use the `--opt=value` form (with the equals sign).
 
+Every data command takes EITHER a manual location (--at / --bbox) OR a geocoded
+one (--country, using the name as the query) — precise when you have
+coordinates, convenient when you don't.
+
 Examples
 --------
-    # one point of interest  (lat,lng)
+    # one point of interest  — manual (lat,lng) …
     uv run python -m scripts.manage add-place "Blue Bottle" cafe --at 37.776,-122.423
+    # … or geocoded by name
+    uv run python -m scripts.manage add-place "Eiffel Tower Cafe" cafe \
+        --country France --query "Eiffel Tower"
 
-    # a neighbourhood rectangle  (min_lon,min_lat,max_lon,max_lat)
+    # a neighbourhood  — manual bbox (min_lon,min_lat,max_lon,max_lat) …
     uv run python -m scripts.manage add-neighborhood "Downtown" --bbox=-122.42,37.77,-122.40,37.79
+    # … or geocoded by name
+    uv run python -m scripts.manage add-neighborhood Gulshan --country Bangladesh
 
-    # 200 synthetic places scattered in a bbox (and a covering neighbourhood)
+    # synthetic places in an area  — manual bbox …
     uv run python -m scripts.manage generate-places --bbox=-122.46,37.74,-122.39,37.81 \
         --count 200 --neighborhood "My Area"
+    # … or geocoded by name
+    uv run python -m scripts.manage generate-places --country France --place Lyon \
+        --count 50 --max-km 6
 
     # a routable road network for a new city, by explicit bbox …
     uv run python -m scripts.manage add-city-roads sylhet --bbox 91.85,24.87,91.92,24.93
@@ -87,19 +99,50 @@ def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
     return min_lon, min_lat, max_lon, max_lat
 
 
+def _resolve_point(country: str, query: str) -> tuple[float, float]:
+    """Geocode a place name within a country to a single (lat, lng)."""
+    matches = geocode.search_place(country, query, limit=1)
+    if not matches:
+        raise typer.BadParameter(f"no match for '{query}' in '{country}'")
+    m = matches[0]
+    console.print(f"Resolved [bold]{m.name.split(',')[0]}[/] → {m.lat:.5f}, {m.lon:.5f}")
+    return m.lat, m.lon
+
+
+def _resolve_bbox(country: str, query: str, max_km: float) -> tuple[float, float, float, float]:
+    """Geocode a place/area name within a country to a (capped) bounding box."""
+    matches = geocode.search_place(country, query, limit=1)
+    if not matches:
+        raise typer.BadParameter(f"no match for '{query}' in '{country}'")
+    m = matches[0]
+    bbox, capped = geocode.cap_bbox(m.lat, m.lon, m.bbox, max_km)
+    note = f" (capped to ~{max_km:.0f} km)" if capped else ""
+    console.print(f"Resolved [bold]{m.name.split(',')[0]}[/] → bbox{note}")
+    return bbox
+
+
 @app.command()
 def add_place(
     name: str = typer.Argument(..., help="Place name"),
     category: str = typer.Argument(..., help=f"One of: {', '.join(CATEGORIES)}"),
-    at: str = typer.Option(..., "--at", help="Location as 'lat,lng'"),
+    at: str | None = typer.Option(None, "--at", help="Location as 'lat,lng'"),
+    country: str | None = typer.Option(
+        None, "--country", help="Geocode by name instead of --at (uses NAME as the query)"
+    ),
+    query: str | None = typer.Option(None, "--query", help="Override the geocode query"),
     rating: float = typer.Option(4.0, min=0, max=5),
     price: int = typer.Option(2, "--price", min=1, max=4, help="Price level 1-4"),
     open24h: bool = typer.Option(False, "--open24h"),
 ) -> None:
-    """Add a single point of interest."""
+    """Add a single point of interest, by explicit --at or by geocoding a name."""
     if category not in CATEGORIES:
         raise typer.BadParameter(f"category must be one of: {', '.join(CATEGORIES)}")
-    lat, lng = _parse_at(at)
+    if at:
+        lat, lng = _parse_at(at)
+    elif country:
+        lat, lng = _resolve_point(country, query or name)
+    else:
+        raise typer.BadParameter("provide --at, or --country to geocode by name")
     with SessionLocal() as s:
         s.add(
             Place(
@@ -118,10 +161,21 @@ def add_place(
 @app.command()
 def add_neighborhood(
     name: str = typer.Argument(..., help="Neighbourhood name (must be unique)"),
-    bbox: str = typer.Option(..., "--bbox", help="'min_lon,min_lat,max_lon,max_lat'"),
+    bbox: str | None = typer.Option(None, "--bbox", help="'min_lon,min_lat,max_lon,max_lat'"),
+    country: str | None = typer.Option(
+        None, "--country", help="Geocode by name instead of --bbox (uses NAME as the query)"
+    ),
+    query: str | None = typer.Option(None, "--query", help="Override the geocode query"),
+    max_km: float = typer.Option(5.0, "--max-km", help="Cap the geocoded area to this size"),
 ) -> None:
-    """Add a neighbourhood as a rectangle from a bounding box."""
-    wkt = polygon_wkt(_parse_bbox(bbox))
+    """Add a neighbourhood rectangle, by explicit --bbox or by geocoding a name."""
+    if bbox:
+        box = _parse_bbox(bbox)
+    elif country:
+        box = _resolve_bbox(country, query or name, max_km)
+    else:
+        raise typer.BadParameter("provide --bbox, or --country to geocode by name")
+    wkt = polygon_wkt(box)
     with SessionLocal() as s:
         s.add(Neighborhood(name=name, geom=WKTElement(wkt, srid=SRID)))
         s.commit()
@@ -130,15 +184,23 @@ def add_neighborhood(
 
 @app.command()
 def generate_places(
-    bbox: str = typer.Option(..., "--bbox", help="'min_lon,min_lat,max_lon,max_lat'"),
+    bbox: str | None = typer.Option(None, "--bbox", help="'min_lon,min_lat,max_lon,max_lat'"),
+    country: str | None = typer.Option(None, "--country", help="Geocode area instead of --bbox"),
+    place: str | None = typer.Option(None, "--place", help="Area/city to geocode (with --country)"),
+    max_km: float = typer.Option(10.0, "--max-km", help="Cap the geocoded area to this size"),
     count: int = typer.Option(100, min=1, help="How many places to generate"),
     seed: int = typer.Option(42, help="Random seed for reproducibility"),
     neighborhood: str | None = typer.Option(
         None, "--neighborhood", help="Also create a neighbourhood covering this bbox"
     ),
 ) -> None:
-    """Scatter N synthetic places inside a bounding box (PostGIS ST_GeneratePoints)."""
-    box = _parse_bbox(bbox)
+    """Scatter N synthetic places in a bbox (explicit --bbox, or geocoded area)."""
+    if bbox:
+        box = _parse_bbox(bbox)
+    elif country and place:
+        box = _resolve_bbox(country, place, max_km)
+    else:
+        raise typer.BadParameter("provide --bbox, or --country and --place to geocode")
     random.seed(seed)
     Faker.seed(seed)
     with SessionLocal() as s:
